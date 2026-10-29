@@ -47,8 +47,24 @@ jobs:
         shell: pwsh
         run: Save-Module Pester -RequiredVersion $env:PESTER_VERSION -Path "$env:RUNNER_TEMP/modules" -Force
 
-      - name: Run tests
-        shell: ${{ matrix.shell }}
+      # `shell` can't come from the matrix, so the same script runs under whichever shell this leg uses.
+      - name: Run tests (Windows PowerShell 5.1)
+        if: matrix.shell == 'powershell'
+        shell: powershell
+        run: |
+          $env:PSModulePath = "$env:RUNNER_TEMP\modules;$env:PSModulePath"
+          Import-Module Pester -RequiredVersion $env:PESTER_VERSION
+          $config = New-PesterConfiguration
+          $config.Run.Path = './tests'
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputPath = 'testResults.xml'
+          Invoke-Pester -Configuration $config
+
+      - name: Run tests (PowerShell 7)
+        if: matrix.shell == 'pwsh'
+        shell: pwsh
         run: |
           $env:PSModulePath = "$env:RUNNER_TEMP\modules;$env:PSModulePath"
           Import-Module Pester -RequiredVersion $env:PESTER_VERSION
