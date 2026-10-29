@@ -1,0 +1,22 @@
+# Test output
+testResults.xml
+coverage.xml
+TestResults/
+
+# Logs and reports, if you point WINFIXKIT_LOGDIR inside the repo
+*.log
+Reports/
+Snapshot-*.html
+Snapshot-*.json
+Snapshot-*.txt
+
+# Build output (e.g. a ps2exe-packaged WinFixKit.exe)
+out/
+*.exe
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
