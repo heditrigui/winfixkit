@@ -2,7 +2,7 @@
 
 **The helpdesk's top 10 Windows fixes in one click. Every fix has a dry run, gets logged, and asks before changing anything.**
 
-[![CI](https://github.com/YOUR-USERNAME/winfixkit/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR-USERNAME/winfixkit/actions/workflows/ci.yml)
+[![CI](https://github.com/heditrigui/winfixkit/actions/workflows/ci.yml/badge.svg)](https://github.com/heditrigui/winfixkit/actions/workflows/ci.yml)
 ![PowerShell 5.1 | 7](https://img.shields.io/badge/PowerShell-5.1%20%7C%207-5391FE?logo=powershell&logoColor=white)
 ![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -14,7 +14,7 @@ WinFixKit is a small PowerShell module with a WPF front end. It packs the repair
 ## Install
 
 ```powershell
-git clone https://github.com/YOUR-USERNAME/winfixkit; .\winfixkit\WinFixKit.cmd
+git clone https://github.com/heditrigui/winfixkit; .\winfixkit\WinFixKit.cmd
 ```
 
 No git? Download the ZIP, extract it, run `Get-ChildItem -Recurse | Unblock-File` in the folder, then double-click **WinFixKit.cmd**.
