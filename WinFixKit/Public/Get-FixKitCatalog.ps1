@@ -27,6 +27,9 @@ function Get-FixKitCatalog {
         @{ Id = 'network'; Category = 'Network'; Title = 'Reset network stack'; Command = 'Reset-NetworkStack'; Parameters = @{}
             RequiresAdmin = $true; Destructive = $true; ReadOnly = $false
             Description = 'Flush DNS, reset Winsock and TCP/IP. Needs a restart afterwards.' }
+        @{ Id = 'drives'; Category = 'Network'; Title = 'Reconnect mapped drives'; Command = 'Restore-MappedDrive'; Parameters = @{}
+            RequiresAdmin = $false; Destructive = $false; ReadOnly = $false
+            Description = 'Reconnect persistent network drives that show as disconnected, if their share is reachable.' }
         @{ Id = 'wu'; Category = 'Repair'; Title = 'Repair Windows Update'; Command = 'Repair-WindowsUpdate'; Parameters = @{}
             RequiresAdmin = $true; Destructive = $true; ReadOnly = $false
             Description = 'Restart update services and rename the SoftwareDistribution and catroot2 caches.' }
@@ -39,6 +42,25 @@ function Get-FixKitCatalog {
         @{ Id = 'store'; Category = 'Repair'; Title = 'Re-register Store apps'; Command = 'Repair-StoreApp'; Parameters = @{}
             RequiresAdmin = $false; Destructive = $false; ReadOnly = $false
             Description = 'Re-registers Store apps for this user from their local manifests.' }
+        @{ Id = 'audio'; Category = 'Repair'; Title = 'Fix no sound'; Command = 'Restart-AudioService'; Parameters = @{}
+            RequiresAdmin = $true; Destructive = $false; ReadOnly = $false
+            Description = 'Restart the Windows audio services.' }
+        @{ Id = 'time'; Category = 'Repair'; Title = 'Resync the clock'; Command = 'Sync-WindowsTime'; Parameters = @{}
+            RequiresAdmin = $true; Destructive = $false; ReadOnly = $false
+            Description = 'Start Windows Time and force a resync. Fixes sign-in and certificate errors caused by a wrong clock.' }
+        @{ Id = 'teams'; Category = 'Apps and accounts'; Title = 'Reset Teams cache'; Command = 'Reset-TeamsCache'; Parameters = @{}
+            RequiresAdmin = $false; Destructive = $true; ReadOnly = $false
+            Description = 'Close Teams and rename its cache (new and classic Teams). You may need to sign in again.' }
+        @{ Id = 'outlook'; Category = 'Apps and accounts'; Title = 'Reset Outlook cache'; Command = 'Reset-OutlookCache'; Parameters = @{}
+            RequiresAdmin = $false; Destructive = $true; ReadOnly = $false
+            Description = 'Close classic Outlook and rename its RoamCache folder.' }
+        @{ Id = 'onedrive'; Category = 'Apps and accounts'; Title = 'Reset OneDrive sync'; Command = 'Reset-OneDriveSync'; Parameters = @{}
+            RequiresAdmin = $false; Destructive = $true; ReadOnly = $false
+            Description = 'Run OneDrive /reset and start it again. Files stay; the first sync takes a while.' }
+        @{ Id = 'credential'; Category = 'Apps and accounts'; Title = 'Clear a saved password'; Command = 'Remove-SavedCredential'; Parameters = @{}
+            RequiresAdmin = $false; Destructive = $true; ReadOnly = $false
+            InputParameter = 'Target'; InputPrompt = 'Credential Manager target to clear (wildcards allowed, e.g. *fileserver*):'
+            Description = 'Delete saved Credential Manager entries for a target you choose. Fixes repeated password prompts.' }
         @{ Id = 'temp'; Category = 'Clean up'; Title = 'Clean my temp files'; Command = 'Invoke-TempCleanup'; Parameters = @{}
             RequiresAdmin = $false; Destructive = $true; ReadOnly = $false
             Description = 'Deletes files older than 2 days from your %TEMP% folder.' }
@@ -53,10 +75,10 @@ function Get-FixKitCatalog {
             Description = 'Removes the installed apps from that list for this user. Reinstallable from the Store.' }
     )
 
-    $order = 'Id', 'Category', 'Title', 'Description', 'Command', 'Parameters', 'RequiresAdmin', 'Destructive', 'ReadOnly'
+    $order = 'Id', 'Category', 'Title', 'Description', 'Command', 'Parameters', 'RequiresAdmin', 'Destructive', 'ReadOnly', 'InputParameter', 'InputPrompt'
     foreach ($item in $items) {
         $props = [ordered]@{}
-        foreach ($key in $order) { $props[$key] = $item[$key] }
+        foreach ($key in $order) { $props[$key] = if ($item.ContainsKey($key)) { $item[$key] } else { $null } }
         $obj = [pscustomobject]$props
         $obj.PSObject.TypeNames.Insert(0, 'WinFixKit.CatalogItem')
         $obj

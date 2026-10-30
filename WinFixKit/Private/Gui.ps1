@@ -1,4 +1,4 @@
-﻿# WPF front end. Show-FixKitGui (public) calls New-FixKitWindow and shows it.
+# WPF front end. Show-FixKitGui (public) calls New-FixKitWindow and shows it.
 # Fixes run in a background runspace so the window stays responsive; fixes that need admin
 # rights run in a separate elevated PowerShell window, so the GUI itself never needs elevation.
 
@@ -231,6 +231,16 @@ function Invoke-FixKitGuiAction {
     $dryRun = [bool]$ui.DryRun.IsChecked -and -not $item.ReadOnly
     $needsElevation = $item.RequiresAdmin -and -not $ui.Elevated
 
+    $parameters = @{} + $item.Parameters
+    if ($item.InputParameter) {
+        $value = Read-FixKitGuiInput -Item $item
+        if (-not $value) {
+            Add-FixKitOutput -Text "Cancelled: $($item.Title)"
+            return
+        }
+        $parameters[$item.InputParameter] = $value
+    }
+
     if (-not $item.ReadOnly -and -not $dryRun) {
         $text = "$($item.Title)`n`n$($item.Description)`n`n"
         if ($item.Destructive) { $text += "This makes changes to this PC that may not be undoable.`n" }
@@ -250,19 +260,38 @@ function Invoke-FixKitGuiAction {
     Add-FixKitOutput -Text ('=== {0:HH:mm:ss}  {1}{2} ===' -f (Get-Date), $item.Title, $label)
 
     if ($needsElevation -and -not $dryRun) {
-        Start-FixKitElevated -Item $item
+        Start-FixKitElevated -Item $item -Parameters $parameters
         return
     }
-    Start-FixKitGuiJob -Item $item -DryRun $dryRun
+    Start-FixKitGuiJob -Item $item -Parameters $parameters -DryRun $dryRun
+}
+function Read-FixKitGuiInput {
+    <#
+    .SYNOPSIS
+        Asks for the value a catalog item needs (e.g. the credential target). Returns '' on cancel.
+    #>
+    param($Item)
+
+    Add-Type -AssemblyName Microsoft.VisualBasic
+    $prompt = $Item.InputPrompt
+    if ($Item.Command -eq 'Remove-SavedCredential') {
+        $targets = @(Get-SavedCredentialTarget -ErrorAction SilentlyContinue | ForEach-Object Target)
+        if ($targets) {
+            $shown = $targets | Select-Object -First 8 | ForEach-Object { if ($_.Length -gt 60) { $_.Substring(0, 57) + '...' } else { $_ } }
+            $prompt += "`n`nSaved now ($($targets.Count)), for example:`n" + ($shown -join "`n")
+        }
+    }
+    [Microsoft.VisualBasic.Interaction]::InputBox($prompt, "WinFixKit - $($Item.Title)", '').Trim()
 }
 
+
 function Start-FixKitGuiJob {
-    param($Item, [bool]$DryRun)
+    param($Item, [hashtable]$Parameters, [bool]$DryRun)
 
     $ui = $script:FixKitUi
     $ps = [powershell]::Create()
     $null = $ps.AddScript($script:GuiJobScript).
-        AddArgument($ui.Manifest).AddArgument($Item.Command).AddArgument($Item.Parameters).
+        AddArgument($ui.Manifest).AddArgument($Item.Command).AddArgument($Parameters).
         AddArgument($DryRun).AddArgument((Get-FixKitLogPath))
     $ui.Job = @{ PowerShell = $ps; Handle = $ps.BeginInvoke(); Item = $Item; Started = Get-Date }
 
@@ -304,10 +333,10 @@ function Receive-FixKitGuiJob {
 }
 
 function Start-FixKitElevated {
-    param($Item)
+    param($Item, [hashtable]$Parameters)
 
     $quote = { param($s) "'" + ([string]$s -replace "'", "''") + "'" }
-    $paramText = @(foreach ($p in $Item.Parameters.GetEnumerator()) {
+    $paramText = @(foreach ($p in $Parameters.GetEnumerator()) {
             if ($p.Value -is [bool]) { "-$($p.Key):`$$($p.Value.ToString().ToLower())" }
             else { "-$($p.Key) $(& $quote $p.Value)" }
         }) -join ' '

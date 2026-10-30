@@ -47,8 +47,10 @@ Describe 'Module' {
 Describe 'Safety contract' {
     BeforeDiscovery {
         $changing = 'Reset-NetworkStack', 'Repair-WindowsUpdate', 'Repair-SystemImage', 'Reset-PrintSpooler',
-        'Invoke-TempCleanup', 'Repair-StoreApp', 'Invoke-Debloat'
-        $destructive = 'Reset-NetworkStack', 'Repair-WindowsUpdate', 'Reset-PrintSpooler', 'Invoke-TempCleanup', 'Invoke-Debloat'
+        'Invoke-TempCleanup', 'Repair-StoreApp', 'Invoke-Debloat', 'Reset-TeamsCache', 'Reset-OutlookCache',
+        'Reset-OneDriveSync', 'Restart-AudioService', 'Sync-WindowsTime', 'Remove-SavedCredential', 'Restore-MappedDrive'
+        $destructive = 'Reset-NetworkStack', 'Repair-WindowsUpdate', 'Reset-PrintSpooler', 'Invoke-TempCleanup', 'Invoke-Debloat',
+        'Reset-TeamsCache', 'Reset-OutlookCache', 'Reset-OneDriveSync', 'Remove-SavedCredential'
         $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole('Administrators')
     }
 
@@ -70,6 +72,8 @@ Describe 'Safety contract' {
             Repair-SystemImage -WhatIf
             Reset-PrintSpooler -WhatIf
             Invoke-TempCleanup -WhatIf -IncludeSystem -ComponentStore
+            Restart-AudioService -WhatIf
+            Sync-WindowsTime -WhatIf
         ) 6>$null
         $results.Count | Should -BeGreaterThan 10
         $results.Status | Sort-Object -Unique | Should -Be 'DryRun'
@@ -77,6 +81,29 @@ Describe 'Safety contract' {
 
     It 'refuses admin fixes without elevation when not a dry run' -Skip:$isAdmin {
         { Reset-PrintSpooler -Confirm:$false } | Should -Throw '*administrator*'
+        { Sync-WindowsTime -Confirm:$false } | Should -Throw '*administrator*'
+    }
+
+    It 'only dry-runs or skips the per-user app fixes under -WhatIf' {
+        $results = @(
+            Reset-TeamsCache -WhatIf
+            Reset-OutlookCache -WhatIf -IncludeOfflineData
+            Reset-OneDriveSync -WhatIf
+        ) 6>$null
+        $results.Count | Should -BeGreaterThan 0
+        $results.Status | Should -Not -Contain 'Done'
+        $results.Status | Should -Not -Contain 'Failed'
+    }
+
+    It 'requires ShouldProcess on every catalog fix that changes something, and High impact when destructive' {
+        foreach ($item in Get-FixKitCatalog | Where-Object { -not $_.ReadOnly }) {
+            $cmd = Get-Command $item.Command
+            $cmd.Parameters.Keys | Should -Contain 'WhatIf' -Because "$($item.Id) changes the system"
+            if ($item.Destructive) {
+                $attr = $cmd.ScriptBlock.Attributes | Where-Object { $_ -is [System.Management.Automation.CmdletBindingAttribute] }
+                $attr.ConfirmImpact | Should -Be 'High' -Because "$($item.Id) is destructive"
+            }
+        }
     }
 }
 
@@ -195,6 +222,7 @@ Describe 'Catalog' {
         foreach ($item in Get-FixKitCatalog) {
             $cmd = Get-Command $item.Command -Module WinFixKit -ErrorAction Stop
             foreach ($p in $item.Parameters.Keys) { $cmd.Parameters.Keys | Should -Contain $p }
+            if ($item.InputParameter) { $cmd.Parameters.Keys | Should -Contain $item.InputParameter }
             if ($item.Destructive) { $item.ReadOnly | Should -BeFalse }
         }
     }
@@ -255,4 +283,44 @@ Describe 'Fix result history' {
         $last.Status | Should -Be 'DryRun'
         $last.Computer | Should -Be $env:COMPUTERNAME
     }
+}
+
+Describe 'Saved credentials' {
+    It 'lists targets without exposing secrets' {
+        $creds = @(Get-SavedCredentialTarget)
+        foreach ($c in $creds) {
+            $c.PSObject.Properties.Name | Should -Not -Contain 'Password'
+            $c.Target | Should -Not -BeNullOrEmpty
+        }
+    }
+
+    It 'refuses patterns that are too broad' {
+        { Remove-SavedCredential -Target '*' -WhatIf } | Should -Throw '*too broad*'
+        { Remove-SavedCredential -Target 'a*?' -WhatIf } | Should -Throw '*too broad*'
+    }
+
+    It 'does nothing when no target matches' {
+        $r = Remove-SavedCredential -Target "*winfixkit-no-such-target-$PID*" -WhatIf -WarningAction SilentlyContinue
+        $r | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Mapped drives' {
+    BeforeAll {
+        Mock -ModuleName WinFixKit Get-PersistentDriveMapping {
+            [pscustomobject]@{ Letter = 'Q'; RemotePath = '\\fs01\share'; UserName = '' }
+            [pscustomobject]@{ Letter = 'R'; RemotePath = '\\offline\share'; UserName = '' }
+        }
+        Mock -ModuleName WinFixKit Test-Path { $false } -ParameterFilter { $LiteralPath -in 'Q:\', 'R:\', '\\offline\share' }
+        Mock -ModuleName WinFixKit Test-Path { $true } -ParameterFilter { $LiteralPath -eq '\\fs01\share' }
+    }
+
+    It 'plans a reconnect for reachable shares and keeps unreachable mappings' {
+        $r = @(Restore-MappedDrive -WhatIf -WarningAction SilentlyContinue)
+        ($r | Where-Object Target -like 'Q:*').Status | Should -Be 'DryRun'
+        $offline = $r | Where-Object Target -like 'R:*'
+        $offline.Status | Should -Be 'Failed'
+        $offline.Message | Should -Match 'Mapping kept'
+    }
+
 }
