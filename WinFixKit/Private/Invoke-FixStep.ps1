@@ -77,7 +77,7 @@ function New-StepResult {
         [string]$Output = ''
     )
 
-    [pscustomobject]@{
+    $stepResult = [pscustomobject]@{
         PSTypeName = 'WinFixKit.StepResult'
         Time       = Get-Date
         Step       = $Step
@@ -85,5 +85,43 @@ function New-StepResult {
         Status     = $Status
         Message    = $Message
         Output     = $Output
+    }
+    Save-FixKitResult -Result $stepResult
+    $stepResult
+}
+
+function Get-FixKitResultFile {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([datetime]$Date = (Get-Date))
+
+    Join-Path -Path (Get-FixKitLogPath) -ChildPath ('FixResults-{0:yyyyMMdd}.jsonl' -f $Date)
+}
+
+function Save-FixKitResult {
+    <#
+    .SYNOPSIS
+        Appends a step result to today's FixResults-yyyyMMdd.jsonl, which the ticket bundle collects.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][psobject]$Result)
+
+    $output = [string]$Result.Output
+    if ($output.Length -gt 4000) { $output = $output.Substring(0, 4000) + ' ...(truncated)' }
+    $record = [ordered]@{
+        Time     = '{0:yyyy-MM-ddTHH:mm:ss}' -f $Result.Time
+        Computer = $env:COMPUTERNAME
+        Step     = $Result.Step
+        Target   = $Result.Target
+        Status   = $Result.Status
+        Message  = $Result.Message
+        Output   = $output
+    }
+    try {
+        $null = Get-FixKitLogFile # creates the log folder if needed
+        Add-Content -LiteralPath (Get-FixKitResultFile) -Value ($record | ConvertTo-Json -Compress) -Encoding UTF8 -ErrorAction Stop -WhatIf:$false -Confirm:$false
+    }
+    catch {
+        Write-Warning -Message "WinFixKit could not save the step result: $($_.Exception.Message)"
     }
 }

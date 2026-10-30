@@ -1,4 +1,4 @@
-﻿#Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.5.0' }
+#Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.5.0' }
 # Variables set in BeforeDiscovery are used by -ForEach, which the analyzer cannot see.
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '')]
 param()
@@ -243,5 +243,16 @@ Describe 'System snapshot' {
             $html | Should -Match 'almost full'
             $html | Should -Match 'restart is pending'
         }
+    }
+}
+
+Describe 'Fix result history' {
+    It 'records every step result in FixResults-<date>.jsonl' {
+        $null = Reset-NetworkStack -DnsOnly -WhatIf
+        $file = InModuleScope WinFixKit { Get-FixKitResultFile }
+        $last = Get-Content -LiteralPath $file | Select-Object -Last 1 | ConvertFrom-Json
+        $last.Step | Should -Be 'Flush DNS cache'
+        $last.Status | Should -Be 'DryRun'
+        $last.Computer | Should -Be $env:COMPUTERNAME
     }
 }
