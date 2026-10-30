@@ -1,6 +1,6 @@
 @{
     RootModule           = 'WinFixKit.psm1'
-    ModuleVersion        = '0.1.0'
+    ModuleVersion        = '0.2.0'
     GUID                 = '3d670a23-776c-4c5a-ad04-9d67b77497e4'
     Author               = 'Hedi Trigui'
     Copyright            = '(c) 2026 Hedi Trigui. MIT License.'
