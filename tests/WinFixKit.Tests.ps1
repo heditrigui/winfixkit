@@ -1,6 +1,9 @@
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.5.0' }
 # Variables set in BeforeDiscovery are used by -ForEach, which the analyzer cannot see.
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '')]
+# Remote-mode tests use fake computer names and a dummy credential with Invoke-Command mocked.
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingComputerNameHardcoded', '')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingConvertToSecureStringWithPlainText', '')]
 param()
 
 # Tests only exercise read-only code paths, -WhatIf dry runs, and real deletes inside
@@ -48,9 +51,10 @@ Describe 'Safety contract' {
     BeforeDiscovery {
         $changing = 'Reset-NetworkStack', 'Repair-WindowsUpdate', 'Repair-SystemImage', 'Reset-PrintSpooler',
         'Invoke-TempCleanup', 'Repair-StoreApp', 'Invoke-Debloat', 'Reset-TeamsCache', 'Reset-OutlookCache',
-        'Reset-OneDriveSync', 'Restart-AudioService', 'Sync-WindowsTime', 'Remove-SavedCredential', 'Restore-MappedDrive'
+        'Reset-OneDriveSync', 'Restart-AudioService', 'Sync-WindowsTime', 'Remove-SavedCredential', 'Restore-MappedDrive',
+        'Invoke-FixKitRemote'
         $destructive = 'Reset-NetworkStack', 'Repair-WindowsUpdate', 'Reset-PrintSpooler', 'Invoke-TempCleanup', 'Invoke-Debloat',
-        'Reset-TeamsCache', 'Reset-OutlookCache', 'Reset-OneDriveSync', 'Remove-SavedCredential'
+        'Reset-TeamsCache', 'Reset-OutlookCache', 'Reset-OneDriveSync', 'Remove-SavedCredential', 'Invoke-FixKitRemote'
         $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole('Administrators')
     }
 
@@ -384,5 +388,60 @@ Describe 'Mapped drives' {
 
     It 'is flagged by the diagnosis' {
         (Get-FixKitDiagnosis | Where-Object Check -eq 'Mapped drives').Fix | Should -Be 'drives'
+    }
+}
+
+Describe 'Remote mode' {
+    It 'resolves catalog ids to commands and parameters' {
+        InModuleScope WinFixKit {
+            $r = Resolve-FixKitRemoteCommand -Fix 'dns'
+            $r.Command | Should -Be 'Reset-NetworkStack'
+            $r.Parameters.DnsOnly | Should -BeTrue
+            (Resolve-FixKitRemoteCommand -Fix 'snapshot').Command | Should -Be 'Get-SystemSnapshot'
+        }
+    }
+
+    It 'rejects unknown, local-only and misspelled requests' {
+        InModuleScope WinFixKit {
+            { Resolve-FixKitRemoteCommand -Fix 'Get-Process' } | Should -Throw '*not a WinFixKit*'
+            { Resolve-FixKitRemoteCommand -Fix 'Show-FixKitGui' } | Should -Throw '*cannot be run remotely*'
+            { Resolve-FixKitRemoteCommand -Fix 'temp' -Parameters @{ NoSuchParam = 1 } } | Should -Throw '*no parameter*'
+        }
+    }
+
+    It 'ships a self-contained module that loads and runs without the files' {
+        $code = InModuleScope WinFixKit { Get-FixKitRemoteModuleCode }
+        $code | Should -Not -Match 'PresentationFramework'
+        $job = Start-Job -ScriptBlock {
+            $null = New-Module -Name WinFixKit -ScriptBlock ([scriptblock]::Create($using:code))
+            [pscustomobject]@{
+                Catalog = @(Get-FixKitCatalog).Count
+                DryRun  = @(Reset-NetworkStack -DnsOnly -WhatIf 6>$null).Status
+            }
+        }
+        $out = $job | Wait-Job -Timeout 120 | Receive-Job
+        $job | Remove-Job -Force
+        $out.Catalog | Should -Be @(Get-FixKitCatalog).Count
+        $out.DryRun | Should -Be 'DryRun'
+    }
+
+    It 'passes the computer, credential and -WhatIf through to Invoke-Command' {
+        Mock -ModuleName WinFixKit Invoke-Command { }
+        $cred = [pscredential]::new('CONTOSO\tech', (ConvertTo-SecureString 'not-a-real-password' -AsPlainText -Force))
+        Invoke-FixKitRemote -ComputerName 'PC042', 'PC043' -Fix 'spooler' -Credential $cred -WhatIf
+        Should -Invoke -ModuleName WinFixKit Invoke-Command -Times 1 -ParameterFilter {
+            ($ComputerName -join ',') -eq 'PC042,PC043' -and
+            $Credential.UserName -eq 'CONTOSO\tech' -and
+            $ArgumentList[1] -eq 'Reset-PrintSpooler' -and
+            $ArgumentList[2].WhatIf -eq $true
+        }
+    }
+
+    It 'asks once per computer and sends -Confirm:$false when not a dry run' {
+        Mock -ModuleName WinFixKit Invoke-Command { }
+        Invoke-FixKitRemote -ComputerName 'PC042' -Fix 'temp' -Confirm:$false
+        Should -Invoke -ModuleName WinFixKit Invoke-Command -Times 1 -ParameterFilter {
+            $ArgumentList[1] -eq 'Invoke-TempCleanup' -and $ArgumentList[2].Confirm -eq $false -and -not $ArgumentList[2].ContainsKey('WhatIf')
+        }
     }
 }

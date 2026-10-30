@@ -30,6 +30,7 @@
         'Get-SavedCredentialTarget'
         'Remove-SavedCredential'
         'Restore-MappedDrive'
+        'Invoke-FixKitRemote'
         'Get-FixKitCatalog'
         'Get-FixKitLogPath'
         'Show-FixKitGui'
