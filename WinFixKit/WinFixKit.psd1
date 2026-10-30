@@ -20,6 +20,8 @@
         'Get-StartupItem'
         'Get-DebloatCandidate'
         'Invoke-Debloat'
+        'Get-FixKitDiagnosis'
+        'Export-FixKitTicketBundle'
         'Reset-TeamsCache'
         'Reset-OutlookCache'
         'Reset-OneDriveSync'

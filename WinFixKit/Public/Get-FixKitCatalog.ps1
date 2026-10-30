@@ -12,6 +12,12 @@ function Get-FixKitCatalog {
     param()
 
     $items = @(
+        @{ Id = 'diagnose'; Category = 'Diagnose'; Title = 'Fix my PC (diagnose)'; Command = 'Get-FixKitDiagnosis'; Parameters = @{}
+            RequiresAdmin = $false; Destructive = $false; ReadOnly = $true
+            Description = 'Quick health checks (network, DNS, updates, printing, disk, time, audio, drives) that recommend which fixes to run.' }
+        @{ Id = 'ticket'; Category = 'Diagnose'; Title = 'Ticket bundle'; Command = 'Export-FixKitTicketBundle'; Parameters = @{}
+            RequiresAdmin = $false; Destructive = $false; ReadOnly = $true
+            Description = 'One .zip with the snapshot, diagnosis, today''s logs and fix results, ready to attach to a ticket.' }
         @{ Id = 'snapshot'; Category = 'Diagnose'; Title = 'System snapshot report'; Command = 'Export-SystemSnapshot'; Parameters = @{}
             RequiresAdmin = $false; Destructive = $false; ReadOnly = $true
             Description = 'OS, hardware, disks, network and recent errors as an HTML report you can attach to a ticket.' }

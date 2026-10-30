@@ -70,11 +70,20 @@ $script:WindowXaml = @'
       <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel x:Name="FixList" Margin="0,0,14,0"/>
       </ScrollViewer>
-      <Border Grid.Column="1" Background="#0F172A" CornerRadius="8" Padding="4">
-        <TextBox x:Name="Output" Background="#0F172A" Foreground="#E2E8F0" BorderThickness="0" Padding="10"
-                 FontFamily="Consolas" FontSize="12" IsReadOnly="True" TextWrapping="NoWrap"
-                 HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"/>
-      </Border>
+      <DockPanel Grid.Column="1">
+        <Border x:Name="RecommendBox" DockPanel.Dock="Top" Visibility="Collapsed" Background="#EFF6FF" BorderBrush="#BFDBFE"
+                BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,10">
+          <StackPanel>
+            <TextBlock x:Name="RecommendTitle" FontWeight="SemiBold" Foreground="#1E3A8A" Margin="0,0,0,6"/>
+            <WrapPanel x:Name="RecommendPanel"/>
+          </StackPanel>
+        </Border>
+        <Border Background="#0F172A" CornerRadius="8" Padding="4">
+          <TextBox x:Name="Output" Background="#0F172A" Foreground="#E2E8F0" BorderThickness="0" Padding="10"
+                   FontFamily="Consolas" FontSize="12" IsReadOnly="True" TextWrapping="NoWrap"
+                   HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"/>
+        </Border>
+      </DockPanel>
     </Grid>
   </DockPanel>
 </Window>
@@ -97,7 +106,7 @@ $script:CardXaml = @'
 </Border>
 '@
 
-# Runs inside the background runspace. Returns @{ Text; OpenPath }.
+# Runs inside the background runspace. Returns @{ Text; OpenPath; Recommend }.
 $script:GuiJobScript = {
     param($Manifest, $Command, $Parameters, $DryRun, $LogDir)
 
@@ -111,16 +120,21 @@ $script:GuiJobScript = {
     $result = @(& $Command @splat)
     if (-not $result) { return @{ Text = 'Nothing to do.'; OpenPath = $null } }
     if ($result[0] -is [System.IO.FileInfo]) {
-        return @{ Text = "Report saved to $($result[0].FullName)"; OpenPath = $result[0].FullName }
+        return @{ Text = "Saved to $($result[0].FullName)"; OpenPath = $result[0].FullName }
     }
 
+    $recommend = @()
     $text = switch ($result[0].PSObject.TypeNames[0]) {
         'WinFixKit.StepResult' { $result | Format-Table Status, Step, Target, Message -AutoSize -Wrap | Out-String -Width 170 }
         'WinFixKit.StartupItem' { $result | Format-Table Enabled, Scope, Name, Command -AutoSize -Wrap | Out-String -Width 220 }
         'WinFixKit.DebloatCandidate' { $result | Format-Table Installed, Name, Description -AutoSize | Out-String -Width 170 }
+        'WinFixKit.DiagnosisResult' {
+            $recommend = @($result | Where-Object { $_.Fix -and $_.Status -in 'Problem', 'Warning' } | ForEach-Object Fix | Select-Object -Unique)
+            $result | Format-Table Status, Check, Detail, @{ n = 'Recommended fix'; e = { $_.FixTitle } } -AutoSize -Wrap | Out-String -Width 200
+        }
         default { $result | Format-Table -AutoSize -Wrap | Out-String -Width 200 }
     }
-    @{ Text = $text.Trim(); OpenPath = $null }
+    @{ Text = $text.Trim(); OpenPath = $null; Recommend = $recommend; IsDiagnosis = ($Command -eq 'Get-FixKitDiagnosis') }
 }
 
 function New-FixKitWindow {
@@ -133,7 +147,7 @@ function New-FixKitWindow {
     $ui = $script:FixKitUi
     $ui.Clear()
     $ui.Window = $window
-    foreach ($name in 'ElevationBadge', 'ElevationText', 'DryRun', 'FixList', 'Output', 'Status', 'OpenLogs', 'ClearOutput') {
+    foreach ($name in 'ElevationBadge', 'ElevationText', 'DryRun', 'FixList', 'Output', 'Status', 'OpenLogs', 'ClearOutput', 'RecommendBox', 'RecommendTitle', 'RecommendPanel') {
         $ui[$name] = $window.FindName($name)
     }
     $ui.Manifest = Join-Path (Split-Path $PSScriptRoot -Parent) 'WinFixKit.psd1'
@@ -265,6 +279,7 @@ function Invoke-FixKitGuiAction {
     }
     Start-FixKitGuiJob -Item $item -Parameters $parameters -DryRun $dryRun
 }
+
 function Read-FixKitGuiInput {
     <#
     .SYNOPSIS
@@ -284,6 +299,42 @@ function Read-FixKitGuiInput {
     [Microsoft.VisualBasic.Interaction]::InputBox($prompt, "WinFixKit - $($Item.Title)", '').Trim()
 }
 
+function Set-FixKitButtonsEnabled {
+    param([bool]$Enabled)
+
+    $ui = $script:FixKitUi
+    foreach ($b in $ui.Buttons) { $b.IsEnabled = $Enabled }
+    foreach ($b in $ui.RecommendPanel.Children) { $b.IsEnabled = $Enabled }
+}
+
+function Show-FixKitRecommendation {
+    <#
+    .SYNOPSIS
+        Fills the "Recommended fixes" bar with one button per fix the diagnosis suggested.
+    #>
+    param([string[]]$Id)
+
+    $ui = $script:FixKitUi
+    $ui.RecommendPanel.Children.Clear()
+    $ui.RecommendBox.Visibility = 'Visible'
+    if (-not $Id) {
+        $ui.RecommendTitle.Text = 'No fixes recommended. Everything checked looks fine.'
+        return
+    }
+    $mode = if ($ui.DryRun.IsChecked) { 'dry run is on, so clicking previews a fix' } else { 'clicking asks before it changes anything' }
+    $ui.RecommendTitle.Text = "Recommended fixes ($mode):"
+    foreach ($fixId in $Id) {
+        $item = $ui.Catalog[$fixId]
+        if (-not $item) { continue }
+        $button = [Windows.Controls.Button]::new()
+        $button.Content = if ($item.RequiresAdmin) { "$($item.Title) (admin)" } else { $item.Title }
+        $button.Tag = $fixId
+        $button.Margin = '0,0,8,4'
+        $button.SetResourceReference([Windows.Controls.Control]::StyleProperty, 'RunButton')
+        $button.Add_Click({ param($btn) Invoke-FixKitGuiAction -Id $btn.Tag })
+        $null = $ui.RecommendPanel.Children.Add($button)
+    }
+}
 
 function Start-FixKitGuiJob {
     param($Item, [hashtable]$Parameters, [bool]$DryRun)
@@ -295,7 +346,7 @@ function Start-FixKitGuiJob {
         AddArgument($DryRun).AddArgument((Get-FixKitLogPath))
     $ui.Job = @{ PowerShell = $ps; Handle = $ps.BeginInvoke(); Item = $Item; Started = Get-Date }
 
-    foreach ($b in $ui.Buttons) { $b.IsEnabled = $false }
+    Set-FixKitButtonsEnabled -Enabled $false
     Update-FixKitStatus -Text "Running: $($Item.Title)..."
     $ui.Timer.Start()
 }
@@ -316,7 +367,9 @@ function Receive-FixKitGuiJob {
         foreach ($r in $out) {
             if ($r -is [hashtable]) {
                 Add-FixKitOutput -Text $r.Text
-                if ($r.OpenPath) { Start-Process -FilePath $r.OpenPath }
+                if ($r.OpenPath -and $r.OpenPath -like '*.zip') { Start-Process -FilePath explorer.exe -ArgumentList "/select,`"$($r.OpenPath)`"" }
+                elseif ($r.OpenPath) { Start-Process -FilePath $r.OpenPath }
+                if ($r.IsDiagnosis) { Show-FixKitRecommendation -Id $r.Recommend }
             }
         }
     }
@@ -328,7 +381,7 @@ function Receive-FixKitGuiJob {
     $ps.Dispose()
     $ui.Job = $null
 
-    foreach ($b in $ui.Buttons) { $b.IsEnabled = $true }
+    Set-FixKitButtonsEnabled -Enabled $true
     Update-FixKitStatus
 }
 

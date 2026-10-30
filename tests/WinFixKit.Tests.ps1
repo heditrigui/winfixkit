@@ -285,6 +285,65 @@ Describe 'Fix result history' {
     }
 }
 
+Describe 'Diagnosis (Fix my PC)' {
+    It 'returns one well-formed result per check, recommending only real catalog fixes' {
+        $ids = (Get-FixKitCatalog).Id
+        $results = @(Get-FixKitDiagnosis)
+        $results.Count | Should -Be 11
+        foreach ($r in $results) {
+            $r.Status | Should -BeIn 'OK', 'Warning', 'Problem', 'Skipped'
+            $r.Detail | Should -Not -BeNullOrEmpty
+            if ($r.Fix) { $r.Fix | Should -BeIn $ids }
+        }
+    }
+
+    It 'recommends Flush DNS when DNS resolution fails' {
+        Mock -ModuleName WinFixKit Resolve-DnsName { throw 'DNS name does not exist' }
+        $dns = Get-FixKitDiagnosis | Where-Object Check -eq 'DNS resolution'
+        $dns.Status | Should -Be 'Problem'
+        $dns.Fix | Should -Be 'dns'
+        $dns.FixTitle | Should -Be 'Flush DNS cache'
+    }
+
+    It 'recommends a network reset when there is no default gateway' {
+        Mock -ModuleName WinFixKit Get-NetRoute { }
+        (Get-FixKitDiagnosis | Where-Object Check -eq 'Default gateway').Fix | Should -Be 'network'
+    }
+
+    It 'recommends the spooler fix when the spooler is stopped' {
+        Mock -ModuleName WinFixKit Get-Service { [pscustomobject]@{ Name = 'Spooler'; Status = 'Stopped'; StartType = 'Automatic' } } -ParameterFilter { $Name -contains 'Spooler' }
+        (Get-FixKitDiagnosis | Where-Object Check -eq 'Print spooler').Fix | Should -Be 'spooler'
+    }
+
+    It 'recommends cleanup when the system drive is nearly full' {
+        Mock -ModuleName WinFixKit Get-CimInstance { [pscustomobject]@{ Size = 100GB; FreeSpace = 5GB } } -ParameterFilter { $ClassName -eq 'Win32_LogicalDisk' }
+        $disk = Get-FixKitDiagnosis | Where-Object Check -eq 'Disk space'
+        $disk.Status | Should -Be 'Problem'
+        $disk.Fix | Should -Be 'temp-system'
+    }
+
+    It 'turns a failing check into Skipped instead of stopping' {
+        Mock -ModuleName WinFixKit Get-NetAdapter { throw 'boom' }
+        $r = Get-FixKitDiagnosis | Where-Object Check -eq 'Network adapter'
+        $r.Status | Should -Be 'Skipped'
+        $r.Detail | Should -Match 'boom'
+    }
+}
+
+Describe 'Ticket bundle' {
+    It 'zips the snapshot, diagnosis, logs, fix results and a readme' {
+        $null = Reset-NetworkStack -DnsOnly -WhatIf
+        $zip = Export-FixKitTicketBundle -Path (Join-Path $TestDrive 'ticket.zip')
+        $zip.Length | Should -BeGreaterThan 1000
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [IO.Compression.ZipFile]::OpenRead($zip.FullName)
+        try { $names = $archive.Entries.FullName -replace '\\', '/' } finally { $archive.Dispose() }
+        foreach ($expected in 'snapshot.html', 'snapshot.json', 'diagnosis.txt', 'README.txt') { $names | Should -Contain $expected }
+        $names | Where-Object { $_ -like 'logs/WinFixKit-*.log' } | Should -Not -BeNullOrEmpty
+        $names | Where-Object { $_ -like 'logs/FixResults-*.jsonl' } | Should -Not -BeNullOrEmpty
+    }
+}
+
 Describe 'Saved credentials' {
     It 'lists targets without exposing secrets' {
         $creds = @(Get-SavedCredentialTarget)
@@ -323,4 +382,7 @@ Describe 'Mapped drives' {
         $offline.Message | Should -Match 'Mapping kept'
     }
 
+    It 'is flagged by the diagnosis' {
+        (Get-FixKitDiagnosis | Where-Object Check -eq 'Mapped drives').Fix | Should -Be 'drives'
+    }
 }
